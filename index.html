@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Discossai | AI-Powered Chat</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #313338; margin: 0; }
+        .custom-scrollbar::-webkit-scrollbar { width: 8px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: #2e3338; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #1e1f22; border-radius: 10px; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="module">
+        import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js';
+        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js';
+        import { getFirestore, collection, addDoc, onSnapshot, doc, setDoc, getDocs, serverTimestamp } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js';
+
+        const firebaseConfig = typeof __firebase_config !== 'undefined' 
+            ? JSON.parse(__firebase_config) 
+            : { /* YOUR_FIREBASE_CONFIG_HERE */ };
+
+        window.Firebase = {
+            config: firebaseConfig,
+            initializeApp, getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken,
+            getFirestore, collection, addDoc, onSnapshot, doc, setDoc, getDocs, serverTimestamp
+        };
+        
+        window.dispatchEvent(new Event('firebase-ready'));
+    </script>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+        
+        const Icons = {
+            Hash: () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="4" y1="9" x2="20" y2="9"></line><line x1="4" y1="15" x2="20" y2="15"></line><line x1="10" y1="3" x2="8" y2="21"></line><line x1="16" y1="3" x2="14" y2="21"></line></svg>,
+            Plus: () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>,
+            Sparkles: () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"></path><path d="M5 3v4"></path><path d="M19 17v4"></path><path d="M3 5h4"></path><path d="M17 19h4"></path></svg>,
+            Wifi: (props) => <svg xmlns="http://www.w3.org/2000/svg" width={props.size || 20} height={props.size || 20} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={props.className}><path d="M5 13a10 10 0 0 1 14 0"></path><path d="M8.5 16.5a5 5 0 0 1 7 0"></path><line x1="12" y1="20" x2="12.01" y2="20"></line></svg>
+        };
+
+        function App() {
+            const [firebaseReady, setFirebaseReady] = useState(!!window.Firebase);
+            const [currentUser, setCurrentUser] = useState(null);
+            const [firebaseUser, setFirebaseUser] = useState(null);
+            const [authMode, setAuthMode] = useState('login');
+            const [messages, setMessages] = useState([]);
+            const [input, setInput] = useState('');
+            const [connected, setConnected] = useState(false);
+            const chatEndRef = useRef(null);
+
+            const appId = typeof __app_id !== 'undefined' ? __app_id : 'discossai-live-v3';
+
+            useEffect(() => {
+                const handleReady = () => setFirebaseReady(true);
+                window.addEventListener('firebase-ready', handleReady);
+                return () => window.removeEventListener('firebase-ready', handleReady);
+            }, []);
+
+            useEffect(() => {
+                if (!firebaseReady) return;
+                const { initializeApp, getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken, config } = window.Firebase;
+                
+                const app = initializeApp(config);
+                const auth = getAuth(app);
+                
+                const initAuth = async () => {
+                    try {
+                        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                            await signInWithCustomToken(auth, __initial_auth_token);
+                        } else {
+                            await signInAnonymously(auth);
+                        }
+                    } catch (err) {
+                        console.error("Auth failed", err);
+                    }
+                };
+
+                initAuth();
+                const unsub = onAuthStateChanged(auth, user => {
+                    setFirebaseUser(user);
+                });
+                return unsub;
+            }, [firebaseReady]);
+
+            useEffect(() => {
+                // RULE 3: Auth Before Queries - Only proceed if firebaseUser is present
+                if (!firebaseUser || !firebaseReady) return;
+                
+                const { getFirestore, onSnapshot, doc, collection } = window.Firebase;
+                const db = getFirestore();
+                
+                // Use explicit paths as per RULE 1
+                const userDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'accounts', firebaseUser.uid);
+                const msgColRef = collection(db, 'artifacts', appId, 'public', 'data', 'messages');
+
+                const unsubAcc = onSnapshot(userDocRef, snap => {
+                    if (snap.exists()) {
+                        setCurrentUser(snap.data());
+                        setAuthMode('chat');
+                        setConnected(true);
+                    }
+                }, (error) => {
+                    console.error("Account listener error:", error);
+                });
+
+                const unsubMsg = onSnapshot(msgColRef, snap => {
+                    const m = snap.docs.map(d => ({id: d.id, ...d.data()}))
+                        .sort((a,b) => (a.timestamp?.seconds || 0) - (b.timestamp?.seconds || 0));
+                    setMessages(m);
+                    setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+                }, (error) => {
+                    console.error("Message listener error:", error);
+                });
+
+                return () => { unsubAcc(); unsubMsg(); };
+            }, [firebaseUser, firebaseReady]);
+
+            const handleAuth = async (e) => {
+                e.preventDefault();
+                if (!firebaseUser) return;
+                const { getFirestore, doc, setDoc, serverTimestamp } = window.Firebase;
+                const db = getFirestore();
+                const { username, password } = e.target.elements;
+                
+                const userData = {
+                    uid: firebaseUser.uid,
+                    username: username.value,
+                    password: password.value,
+                    avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${username.value}`,
+                    timestamp: serverTimestamp()
+                };
+                await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', firebaseUser.uid), userData);
+            };
+
+            const send = async (e) => {
+                e.preventDefault();
+                if (!input.trim() || !firebaseUser || !currentUser) return;
+                const { getFirestore, collection, addDoc, serverTimestamp } = window.Firebase;
+                const db = getFirestore();
+                const text = input;
+                setInput('');
+                await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'messages'), {
+                    text,
+                    uid: firebaseUser.uid,
+                    username: currentUser.username,
+                    avatar: currentUser.avatar,
+                    timestamp: serverTimestamp()
+                });
+            };
+
+            if (!firebaseReady) return (
+                <div className="h-screen bg-[#313338] flex flex-col items-center justify-center text-white gap-4">
+                    <div className="w-8 h-8 border-4 border-[#5865f2] border-t-transparent rounded-full animate-spin"></div>
+                    <div className="text-sm font-bold opacity-50">INITIALIZING DISCOSSAI ENGINE...</div>
+                </div>
+            );
+
+            if (authMode !== 'chat') {
+                return (
+                    <div className="h-screen flex items-center justify-center p-4">
+                        <div className="w-full max-w-md bg-[#313338] p-8 rounded-lg shadow-2xl text-white border border-white/5">
+                            <h1 className="text-3xl font-bold mb-2 text-center">Discossai</h1>
+                            <p className="text-center text-[#949ba4] text-sm mb-6 uppercase tracking-widest font-bold">Secure AI Chat</p>
+                            <form onSubmit={handleAuth} className="space-y-4">
+                                <div>
+                                    <label className="text-[10px] font-bold text-[#b5bac1] uppercase">Username</label>
+                                    <input name="username" required className="w-full bg-[#1e1f22] p-3 rounded outline-none border border-transparent focus:border-[#5865f2] mt-1" />
+                                </div>
+                                <div>
+                                    <label className="text-[10px] font-bold text-[#b5bac1] uppercase">Password</label>
+                                    <input name="password" type="password" required className="w-full bg-[#1e1f22] p-3 rounded outline-none border border-transparent focus:border-[#5865f2] mt-1" />
+                                </div>
+                                <button className="w-full bg-[#5865f2] py-3 rounded font-bold hover:bg-[#4752c4] transition-all transform active:scale-[0.98] mt-4">Join Community</button>
+                            </form>
+                        </div>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="flex h-screen overflow-hidden text-[#dbdee1] font-inter">
+                    {/* Server Sidebar */}
+                    <div className="w-[72px] bg-[#1e1f22] flex flex-col items-center py-3 space-y-3">
+                        <div className="w-12 h-12 bg-[#5865f2] rounded-2xl flex items-center justify-center text-white font-bold cursor-pointer hover:rounded-xl transition-all shadow-lg">D</div>
+                    </div>
+
+                    {/* Channel Sidebar */}
+                    <div className="w-60 bg-[#2b2d31] flex flex-col">
+                        <div className="h-12 border-b border-[#1f2023] flex items-center px-4 font-bold text-white shadow-sm">Discossai Hub</div>
+                        <div className="flex-1 p-2">
+                            <div className="flex items-center gap-2 p-2 bg-[#3f4147] rounded text-white cursor-pointer"><Icons.Hash /> general</div>
+                        </div>
+                        {/* User Profile Area */}
+                        <div className="bg-[#232428] p-2 flex items-center gap-3">
+                            <div className="relative">
+                                <img src={currentUser?.avatar} className="w-8 h-8 rounded-full bg-gray-600 shadow-inner" />
+                                <div className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-green-500 rounded-full border-2 border-[#232428]"></div>
+                            </div>
+                            <div className="flex-1 text-xs truncate font-bold text-white">{currentUser?.username}</div>
+                            <Icons.Wifi size={14} className={connected ? 'text-green-500' : 'text-red-500'} />
+                        </div>
+                    </div>
+
+                    {/* Chat Main */}
+                    <div className="flex-1 flex flex-col bg-[#313338]">
+                        <div className="h-12 border-b border-[#26272d] flex items-center px-4 font-bold text-white shadow-sm gap-2">
+                            <Icons.Hash /> general
+                        </div>
+                        <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
+                            {messages.length === 0 && (
+                                <div className="h-full flex flex-col items-center justify-center opacity-20">
+                                    <Icons.Sparkles />
+                                    <p className="text-xs font-bold mt-2">START THE CONVERSATION</p>
+                                </div>
+                            )}
+                            {messages.map(m => (
+                                <div key={m.id} className="flex gap-4 group hover:bg-[#2e3035] -mx-4 px-4 py-1 transition-colors">
+                                    <img src={m.avatar} className="w-10 h-10 rounded-full flex-none bg-gray-700" />
+                                    <div className="min-w-0">
+                                        <div className="flex items-baseline gap-2">
+                                            <span className="font-bold text-white hover:underline cursor-pointer">{m.username}</span>
+                                            <span className="text-[10px] text-[#949ba4] uppercase font-bold tracking-tighter">
+                                                {m.timestamp ? new Date(m.timestamp.seconds*1000).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '...'}
+                                            </span>
+                                        </div>
+                                        <div className="leading-5 break-words text-[#dcddde]">{m.text}</div>
+                                    </div>
+                                </div>
+                            ))}
+                            <div ref={chatEndRef} />
+                        </div>
+
+                        {/* Input Box */}
+                        <div className="p-4 bg-[#313338]">
+                            <div className="bg-[#383a40] rounded-lg p-3 flex items-center gap-3 shadow-inner">
+                                <div className="p-1 hover:bg-white/5 rounded cursor-pointer text-[#b5bac1]"><Icons.Plus /></div>
+                                <form onSubmit={send} className="flex-1">
+                                    <input value={input} onChange={e => setInput(e.target.value)} placeholder="Message #general" className="w-full bg-transparent outline-none text-[#dcddde] placeholder-[#72767d]" />
+                                </form>
+                                <div className="p-1 hover:bg-white/5 rounded cursor-pointer text-[#b5bac1] hover:text-[#5865f2]"><Icons.Sparkles /></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
