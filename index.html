@@ -26,7 +26,15 @@
 
         const firebaseConfig = typeof __firebase_config !== 'undefined' 
             ? JSON.parse(__firebase_config) 
-            : { /* YOUR_FIREBASE_CONFIG_HERE */ };
+            : {
+    apiKey: "AIzaSyA7i9ZGnfgsNi2wdyb4X-NYGROjNjNHiNk",
+    authDomain: "discoussai.firebaseapp.com",
+    projectId: "discoussai",
+    storageBucket: "discoussai.firebasestorage.app",
+    messagingSenderId: "1062737164748",
+    appId: "1:1062737164748:web:6678adccadd39774938569",
+    measurementId: "G-6WWWPWVLP8" 
+    };
 
         window.Firebase = {
             config: firebaseConfig,
@@ -258,4 +266,5 @@
         root.render(<App />);
     </script>
 </body>
+
 </html>
